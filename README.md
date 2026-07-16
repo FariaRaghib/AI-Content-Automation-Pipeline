@@ -3,7 +3,7 @@
 An autonomous content operations pipeline built for **LeadQualify** (a B2B
 lead-scoring SaaS). It researches the competitive landscape, writes on-brand
 content, publishes it across platforms, monitors engagement, and qualifies and
-replies to interested leads — with a human only reviewing a daily summary.
+replies to interested leads with a human only reviewing a daily summary.
 
 > Built solo, alongside the core LeadQualify product, to solve a simple problem:
 > consistent daily content needs research + writing + scheduling + posting + reply
@@ -27,7 +27,7 @@ replies to interested leads — with a human only reviewing a daily summary.
 ## How It Works
 
 Orchestrated with **n8n** (self-hosted via Docker), which triggers Python scripts
-through a small Flask bridge service running on the host — needed because Docker
+through a small Flask bridge service running on the host needed because Docker
 isolates the container from the host filesystem.
 
 Full diagram and stage-by-stage detail: **[WORKFLOW.md](./WORKFLOW.md)**
