@@ -1,0 +1,72 @@
+[
+  {
+    "platform": "linkedin",
+    "account": "Apollo.io",
+    "caption": "The problem: SDRs waste 80% of their time on leads that will never close. The solution: AI-powered scoring that identifies the 20% that matter. Apollo just added predictive lead scoring—tells you which accounts are actually worth working, and routes them automatically. No more guessing.",
+    "tags": ["lead-scoring", "efficiency", "automation", "ai"],
+    "url": "https://linkedin.com/company/apolloio"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Apollo.io",
+    "caption": "Your data is garbage because you're treating it like a database. It's actually a decision-making tool. Clean contacts. Real-time scoring. Buying committee identification. This is how Apollo helps you find the people who can actually say yes.",
+    "tags": ["data-quality", "buying-committee", "b2b-insight"],
+    "url": "https://linkedin.com/company/apolloio"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Clay",
+    "caption": "Cold calling at 1% meeting rates is kneecapping your pipeline. We built the fix. Coordinate every channel around one warm touchpoint. Package ships, ads go live as air cover, the landing page already knows the account. SDR gets the tight script. Prospect swears you two go way back. This is orchestration.",
+    "tags": ["multi-channel", "orchestration", "personalization", "workflow"],
+    "url": "https://linkedin.com/company/grow-with-clay"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Clay",
+    "caption": "Everyone talks about finding the next deal. But the real secret is follow-up. Consistent follow-ups + the right tools = pipeline on autopilot. We're not replacing your team. We're giving them back their time so they can close.",
+    "tags": ["founder-voice", "followup", "pipeline"],
+    "url": "https://linkedin.com/company/grow-with-clay"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Warmly",
+    "caption": "Your website is getting 1,000 visitors a month. You're reaching 0 of them. Why? You don't know who they are or what they want. Warmly identifies every visitor at the person level, scores them instantly, and routes the hot ones to your team. Pipeline from traffic that was invisible before.",
+    "tags": ["website-visitors", "intent-detection", "lead-qualification"],
+    "url": "https://linkedin.com/company/warmly-ai"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Warmly",
+    "caption": "Sales reps don't have the time to waste on accounts that will never convert. Warmly's Compound Score doesn't just answer 'who's likely to buy.' It answers 'where should the AI spend effort next.' That's the difference between a score and action.",
+    "tags": ["lead-scoring", "ai-agent", "action-driven"],
+    "url": "https://linkedin.com/company/warmly-ai"
+  },
+  {
+    "platform": "instagram",
+    "account": "apolloio",
+    "caption": "When your CRM is a spreadsheet and your lead list is a prayer 🙏 Not this year. 275M verified contacts. One click. Find the right person.",
+    "tags": ["lead-database", "b2b-data", "sales-shortcut"],
+    "url": "https://instagram.com/apolloio"
+  },
+  {
+    "platform": "instagram",
+    "account": "clayrunhq",
+    "caption": "Your best prospects are hiding in your CRM right now. Mined data + research + personalization = deals. Clay builds the list, the message, the timing. You close.",
+    "tags": ["data-mining", "personalization", "sales-automation"],
+    "url": "https://instagram.com/clayrunhq"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Apollo.io",
+    "caption": "Release notes just dropped. Apollo got faster. Multi-channel sequences now run on every channel at once. Email, LinkedIn, calls. One sequence. Real results. Stop jumping between tools. This is what go-to-market looks like in 2026.",
+    "tags": ["product-update", "multi-channel", "gtm-platform"],
+    "url": "https://linkedin.com/company/apolloio"
+  },
+  {
+    "platform": "linkedin",
+    "account": "Warmly",
+    "caption": "Your LinkedIn ads are reaching cold prospects. Warmly reaches warm ones. We identify people visiting your site right now, score them by intent, and auto-sync them to LinkedIn Ads. Your CPL drops 40%. Your close rate jumps. Same budget. Better leads.",
+    "tags": ["intent-data", "linkedin-ads", "lead-quality"],
+    "url": "https://linkedin.com/company/warmly-ai"
+  }
+]
