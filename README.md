@@ -46,7 +46,7 @@ Full diagram and stage-by-stage detail: **[WORKFLOW.md](./WORKFLOW.md)**
 
 ## Status
 
-Running in production for LeadQualify's own marketing — fully autonomous, scheduled,
+Running in production for LeadQualify's own marketing fully autonomous, scheduled,
 no manual intervention beyond the daily Telegram summary.
 
 ## Challenges Solved
