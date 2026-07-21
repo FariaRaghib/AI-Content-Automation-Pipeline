@@ -1,11 +1,16 @@
 """
-Agent 7: Dev.to Publisher
--------------------------
+Agent 7: Dev.to Publisher (+ post status tracking)
+-------------------------------------------------------
 Takes blog drafts from blog_agent.py (data/blog_agent_drafts.json)
 and publishes them to dev.to via their REST API.
 
 Keeps a log (data/devto_published_log.json) of what's already been
 published so re-running this script doesn't create duplicate posts.
+
+NEW: writes a status record to data/post_status.json after every run -
+whether it posted successfully (live or as a draft), failed, or was
+skipped (nothing new to publish) - so telegram_bot_fixed.py can report
+"posted / failed / skipped" per platform in the daily digest.
 
 By default, posts are pushed to dev.to as UNPUBLISHED DRAFTS
 (published: false) so you can review/tweak in the dev.to editor
@@ -34,8 +39,41 @@ DATA_DIR = os.path.join(PROJECT_DIR, "data")
 DRAFTS_FILE = os.path.join(DATA_DIR, "blog_agent_drafts.json")
 PUBLISHED_LOG_FILE = os.path.join(DATA_DIR, "devto_published_log.json")
 ENV_FILE = os.path.join(PROJECT_DIR, ".env")
+STATUS_FILE = os.path.join(DATA_DIR, "post_status.json")
 
 DEVTO_API_URL = "https://dev.to/api/articles"
+
+
+# =========================================================
+# Status tracking (shared across all platform publishers)
+# =========================================================
+def write_status(platform, status, detail=None, post_id=None):
+    """
+    Update this platform's entry in the shared post_status.json file,
+    without touching other platforms' entries.
+
+    status: "posted" | "failed" | "skipped"
+    detail: error message (for "failed") or a short note (for "skipped"/"posted")
+    """
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+
+    all_status = {}
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE, encoding='utf-8') as f:
+                all_status = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            all_status = {}  # if the file's corrupted, don't crash - just start fresh
+
+    all_status[platform] = {
+        "status": status,
+        "detail": detail,
+        "post_id": post_id,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    with open(STATUS_FILE, "w", encoding='utf-8') as f:
+        json.dump(all_status, f, indent=2, ensure_ascii=False)
 
 
 def load_env():
@@ -138,21 +176,27 @@ def publish_to_devto(blog_post, api_key, publish_live):
             return json.loads(body)
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8")
-        raise SystemExit(f"dev.to API error {e.code}: {error_body}")
+        raise Exception(f"dev.to API error {e.code}: {error_body}")
     except urllib.error.URLError as e:
-        raise SystemExit(f"Network error calling dev.to API: {e.reason}")
+        raise Exception(f"Network error calling dev.to API: {e.reason}")
 
 
 def main():
     env = load_env()
     if not env["api_key"]:
-        raise SystemExit(
-            "ERROR: DEVTO_API_KEY not found. Add it to .env "
-            "(Settings -> Extensions -> DEV API Keys on dev.to)."
-        )
+        msg = ("DEVTO_API_KEY not found. Add it to .env "
+               "(Settings -> Extensions -> DEV API Keys on dev.to).")
+        print(f"ERROR: {msg}")
+        write_status("blog", "failed", detail=msg)
+        raise SystemExit(f"ERROR: {msg}")
 
-    print("Loading blog drafts...")
-    drafts_data = load_drafts()
+    try:
+        print("Loading blog drafts...")
+        drafts_data = load_drafts()
+    except SystemExit as e:
+        write_status("blog", "failed", detail=str(e))
+        raise
+
     blog_posts = drafts_data["blog_posts"]
 
     log = load_published_log()
@@ -167,15 +211,21 @@ def main():
             break
 
     if next_post is None:
-        print("All current drafts have already been published to dev.to. "
-              "Run blog_agent.py to generate new drafts, or nothing to do.")
+        msg = "All current drafts have already been published to dev.to."
+        print(f"{msg} Run blog_agent.py to generate new drafts, or nothing to do.")
+        write_status("blog", "skipped", detail=msg)
         return
 
     meta = next_post["metadata"]
     mode = "LIVE" if env["auto_publish"] else "DRAFT (unpublished)"
     print(f"Publishing '{meta['title']}' to dev.to as {mode}...")
 
-    result = publish_to_devto(next_post, env["api_key"], env["auto_publish"])
+    try:
+        result = publish_to_devto(next_post, env["api_key"], env["auto_publish"])
+    except Exception as e:
+        print(f"[FAIL] dev.to publish failed: {e}")
+        write_status("blog", "failed", detail=str(e))
+        raise
 
     published_slugs.add(meta["slug"])
     log["published_slugs"] = sorted(published_slugs)
@@ -193,6 +243,9 @@ def main():
     print(f"URL: {result.get('url')}")
     if not env["auto_publish"]:
         print("Note: posted as an UNPUBLISHED DRAFT. Log into dev.to to review and hit Publish.")
+
+    status_detail = f"{meta['title'][:80]} ({mode.lower()})"
+    write_status("blog", "posted", detail=status_detail, post_id=result.get("id"))
 
 
 if __name__ == "__main__":

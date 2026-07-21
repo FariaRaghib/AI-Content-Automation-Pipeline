@@ -1,17 +1,27 @@
 """
-LinkedIn Publisher
---------------------
-Takes today's (or next upcoming) LinkedIn hook from the planner calendar
-and posts it directly to LinkedIn as Faria, with:
-  - A real, free, topic-matched stock photo (via Pexels)
-  - Your website link included in the post text (clickable)
+Instagram Publisher (+ post status tracking)
+------------------------------------------------
+1. Takes today's Instagram hook from the planner calendar
+2. Fetches a real, free, topic-matched stock photo (via Pexels)
+3. Posts to Instagram via Meta Graph API (2-step: create container -> publish)
 
-LinkedIn requires the actual image bytes uploaded to their own asset
-storage (unlike Instagram, which can take a public URL directly) - so
-we download the Pexels photo locally first, then upload it to LinkedIn.
+NEW: writes a status record to data/post_status.json after every run -
+whether it posted successfully, failed, or was skipped (nothing scheduled)
+- so telegram_bot_fixed.py can report "posted / failed / skipped" per
+platform in the daily digest, instead of staying silent about it.
+
+Setup needed in .env:
+    INSTAGRAM_ACCESS_TOKEN=...
+    INSTAGRAM_BUSINESS_ACCOUNT_ID=...
+    PEXELS_API_KEY=...   (free, see stock_photo_fetcher.py docstring)
+
+Note: Instagram's API needs a publicly reachable image URL, but Pexels
+photos are already hosted on Pexels' own servers - so unlike the old
+quote-card approach, we DON'T need a separate image-hosting upload step.
+We just pass Pexels' own image URL directly to Instagram.
 
 Run:
-    python linkedin_publisher.py
+    python instagram_publisher.py
 """
 
 import os
@@ -20,23 +30,60 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 import requests
 
-from stock_photo_fetcher import fetch_stock_photo
+from stock_photo_fetcher import build_search_query
 
 load_dotenv()
 
-LINKEDIN_ACCESS_TOKEN = os.getenv("LINKEDIN_ACCESS_TOKEN")
-LINKEDIN_PERSON_URN = os.getenv("LINKEDIN_PERSON_URN")
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://lead-qualify-ten.vercel.app")
+INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID")
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 
-if not LINKEDIN_ACCESS_TOKEN or not LINKEDIN_PERSON_URN:
-    raise SystemExit("ERROR: LINKEDIN_ACCESS_TOKEN or LINKEDIN_PERSON_URN missing in .env")
+if not INSTAGRAM_ACCESS_TOKEN or not INSTAGRAM_BUSINESS_ACCOUNT_ID:
+    raise SystemExit("ERROR: INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_BUSINESS_ACCOUNT_ID missing in .env")
+
+if not PEXELS_API_KEY:
+    raise SystemExit("ERROR: PEXELS_API_KEY missing in .env. Get a free one at pexels.com/api")
 
 CALENDAR_FILE = "data/planner_calendar.json"
-LINKEDIN_API_BASE = "https://api.linkedin.com/v2"
+GRAPH_API_BASE = "https://graph.facebook.com/v19.0"
+PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
+STATUS_FILE = "data/post_status.json"
 
 
-def load_todays_linkedin_post():
-    """Get today's LinkedIn post from the calendar, or the next upcoming one."""
+# =========================================================
+# Status tracking (shared across all platform publishers)
+# =========================================================
+def write_status(platform, status, detail=None, post_id=None):
+    """
+    Update this platform's entry in the shared post_status.json file,
+    without touching other platforms' entries.
+
+    status: "posted" | "failed" | "skipped"
+    detail: error message (for "failed") or a short note (for "skipped")
+    """
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+
+    all_status = {}
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE, encoding='utf-8') as f:
+                all_status = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            all_status = {}  # if the file's corrupted, don't crash - just start fresh
+
+    all_status[platform] = {
+        "status": status,
+        "detail": detail,
+        "post_id": post_id,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    with open(STATUS_FILE, "w", encoding='utf-8') as f:
+        json.dump(all_status, f, indent=2, ensure_ascii=False)
+
+
+def load_todays_instagram_post():
+    """Get today's Instagram post from the calendar, or the next upcoming one."""
     if not os.path.exists(CALENDAR_FILE):
         raise SystemExit(f"ERROR: {CALENDAR_FILE} not found. Run planner.py first.")
 
@@ -46,128 +93,105 @@ def load_todays_linkedin_post():
     calendar = data['calendar']
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    todays_li_posts = [p for p in calendar if p['platform'] == 'linkedin' and p['date'] == today]
-    if todays_li_posts:
-        return todays_li_posts[0]
+    todays_ig_posts = [p for p in calendar if p['platform'] == 'instagram' and p['date'] == today]
+    if todays_ig_posts:
+        return todays_ig_posts[0]
 
-    upcoming = [p for p in calendar if p['platform'] == 'linkedin' and p['date'] >= today]
+    upcoming = [p for p in calendar if p['platform'] == 'instagram' and p['date'] >= today]
     if upcoming:
         return sorted(upcoming, key=lambda x: x['date'])[0]
 
     return None
 
 
-def register_image_upload():
-    """Step 1: Tell LinkedIn we want to upload an image, get an upload URL + asset URN."""
-    url = f"{LINKEDIN_API_BASE}/assets?action=registerUpload"
-    headers = {
-        "Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "registerUploadRequest": {
-            "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
-            "owner": LINKEDIN_PERSON_URN,
-            "serviceRelationships": [
-                {
-                    "relationshipType": "OWNER",
-                    "identifier": "urn:li:userGeneratedContent"
-                }
-            ]
-        }
-    }
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
+def get_pexels_image_url(hook_text="", angle_text=""):
+    """Search Pexels and return a direct, publicly-hosted image URL (no download needed)."""
+    import random
+
+    query = build_search_query(hook_text, angle_text)
+
+    headers = {"Authorization": PEXELS_API_KEY}
+    params = {"query": query, "per_page": 10, "orientation": "square"}
+
+    response = requests.get(PEXELS_SEARCH_URL, headers=headers, params=params, timeout=15)
     if response.status_code != 200:
-        raise Exception(f"Register upload failed: {response.text}")
+        raise Exception(f"Pexels search failed ({response.status_code}): {response.text}")
 
-    result = response.json()
-    upload_url = result['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl']
-    asset_urn = result['value']['asset']
-    return upload_url, asset_urn
+    photos = response.json().get("photos", [])
 
+    if not photos:
+        raise Exception(f"No stock photos found for query: '{query}'.")
 
-def upload_image_binary(upload_url, image_path):
-    """Step 2: Upload the actual image bytes to the URL LinkedIn gave us."""
-    headers = {
-        "Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}"
-    }
-    with open(image_path, "rb") as f:
-        response = requests.put(upload_url, headers=headers, data=f, timeout=30)
-    if response.status_code not in (200, 201):
-        raise Exception(f"Image upload failed ({response.status_code}): {response.text}")
+    chosen_photo = random.choice(photos[:min(5, len(photos))])
+    return chosen_photo["src"]["large"], query
 
 
-def post_to_linkedin_with_image(text, asset_urn):
-    """Step 3: Create the actual post, referencing the uploaded image asset."""
-    url = f"{LINKEDIN_API_BASE}/ugcPosts"
-    headers = {
-        "Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0"
-    }
-
+def create_media_container(image_url, caption):
+    """Step 1: Create the media container on Instagram."""
+    url = f"{GRAPH_API_BASE}/{INSTAGRAM_BUSINESS_ACCOUNT_ID}/media"
     payload = {
-        "author": LINKEDIN_PERSON_URN,
-        "lifecycleState": "PUBLISHED",
-        "specificContent": {
-            "com.linkedin.ugc.ShareContent": {
-                "shareCommentary": {
-                    "text": text
-                },
-                "shareMediaCategory": "IMAGE",
-                "media": [
-                    {
-                        "status": "READY",
-                        "media": asset_urn,
-                        "title": {
-                            "text": "LeadQualify"
-                        }
-                    }
-                ]
-            }
-        },
-        "visibility": {
-            "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-        }
+        "image_url": image_url,
+        "caption": caption,
+        "access_token": INSTAGRAM_ACCESS_TOKEN
     }
+    response = requests.post(url, data=payload, timeout=30)
 
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
-
-    if response.status_code == 201:
-        return response.headers.get("x-restli-id", "unknown-id")
+    if response.status_code == 200:
+        return response.json()['id']
     else:
-        raise Exception(f"LinkedIn post failed ({response.status_code}): {response.text}")
+        raise Exception(f"Media container creation failed: {response.text}")
+
+
+def publish_media(container_id):
+    """Step 2: Publish the created media container."""
+    url = f"{GRAPH_API_BASE}/{INSTAGRAM_BUSINESS_ACCOUNT_ID}/media_publish"
+    payload = {
+        "creation_id": container_id,
+        "access_token": INSTAGRAM_ACCESS_TOKEN
+    }
+    response = requests.post(url, data=payload, timeout=30)
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Publish failed: {response.text}")
 
 
 def main():
-    print("Loading today's LinkedIn post from calendar...")
-    post = load_todays_linkedin_post()
+    print("Loading today's Instagram post from calendar...")
+    post = load_todays_instagram_post()
 
     if not post:
-        print("[INFO] No LinkedIn post scheduled today or upcoming. Nothing to publish.")
+        print("[INFO] No Instagram post scheduled today or upcoming. Nothing to publish.")
+        write_status("instagram", "skipped", detail="No Instagram post scheduled for today")
         return
 
     hook_text = post['hook']
     angle_text = post.get('angle', '')
-    full_text = f"{hook_text}\n\n{post['cta']}\n\nTry it: {WEBSITE_URL}"
+    caption = f"{post['hook']}\n\n{post['cta']}\n\n#leadscoring #b2bsales #salestech #leadqualify"
 
     print(f"Post to publish: {hook_text[:60]}...")
 
-    print("Finding a matching stock photo...")
-    image_path, query_used = fetch_stock_photo(hook_text, angle_text, filename="linkedin_post.jpg")
-    print(f"[OK] Downloaded photo (query: '{query_used}'): {image_path}")
+    try:
+        print("Finding a matching stock photo...")
+        image_url, query_used = get_pexels_image_url(hook_text, angle_text)
+        print(f"[OK] Found photo (query: '{query_used}'): {image_url}")
 
-    print("Registering image upload with LinkedIn...")
-    upload_url, asset_urn = register_image_upload()
+        print("Creating Instagram media container...")
+        container_id = create_media_container(image_url, caption)
+        print(f"[OK] Container created: {container_id}")
 
-    print("Uploading image...")
-    upload_image_binary(upload_url, image_path)
-    print(f"[OK] Image uploaded: {asset_urn}")
+        print("Publishing to Instagram...")
+        result = publish_media(container_id)
+        post_id = result.get('id')
+        print(f"[OK] Published! Post ID: {post_id}")
 
-    print("Publishing post...")
-    post_id = post_to_linkedin_with_image(full_text, asset_urn)
+        write_status("instagram", "posted", detail=hook_text[:80], post_id=post_id)
 
-    print(f"[OK] Published to LinkedIn! Post ID: {post_id}")
+    except Exception as e:
+        print(f"[FAIL] Instagram publish failed: {e}")
+        write_status("instagram", "failed", detail=str(e))
+        raise  # still exit non-zero so agent_api.py's success flag reflects the real failure
 
 
 if __name__ == "__main__":
