@@ -12,10 +12,12 @@ Run:
 
 import os
 import json
+import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import urllib.request
 import urllib.parse
+import urllib.error
 
 load_dotenv()
 
@@ -31,6 +33,8 @@ if not GOOGLE_API_KEY:
 GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GOOGLE_API_KEY}"
 
+MAX_RETRIES = 4
+
 
 def load_themes():
     """Load top themes from ideator output."""
@@ -40,12 +44,12 @@ def load_themes():
         return json.load(f)
 
 
-def generate_hooks(themes):
-    """Generate 5 content hooks as Faria using Google Gemini."""
-    
+def generate_hooks(themes, max_retries=MAX_RETRIES):
+    """Generate 5 content hooks as Faria using Google Gemini, with retry/backoff on 429/503."""
+
     top_themes = [t['theme'] for t in themes['top_themes'][:3]]
     themes_str = ", ".join(top_themes)
-    
+
     prompt = f"""You are Faria Raghib, founder of LeadQualify (a B2B lead scoring AI platform).
 
 Your voice is: direct, technical, founder-first. No marketing fluff. You call out real problems.
@@ -81,8 +85,6 @@ Format your response ONLY as valid JSON with this exact structure:
 Generate exactly 5 hooks. Make them sound like Faria wrote them. Direct. Specific. Not salesy.
 Output ONLY the JSON, no other text."""
 
-    url = GEMINI_API_URL
-    
     payload = {
         "contents": [
             {
@@ -97,61 +99,75 @@ Output ONLY the JSON, no other text."""
             "responseMimeType": "application/json"
         }
     }
-    
-    print("Generating hooks as Faria (via Google Gemini)...")
-    try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={"Content-Type": "application/json"}
-        )
-        
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode('utf-8'))
-        
-        # Extract text from Gemini response
-        content = result['candidates'][0]['content']['parts'][0]['text']
 
-        # With responseMimeType set, Gemini's output IS the JSON directly -
-        # no need to regex-extract it from surrounding text.
+    print("Generating hooks as Faria (via Google Gemini)...")
+
+    for attempt in range(max_retries):
         try:
-            hooks_data = json.loads(content)
-            return hooks_data['hooks']
-        except json.JSONDecodeError:
-            # Fallback: try to extract a {...} block in case there's any wrapping text
-            import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                hooks_data = json.loads(json_match.group())
+            req = urllib.request.Request(
+                GEMINI_API_URL,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={"Content-Type": "application/json"}
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read().decode('utf-8'))
+
+            # Extract text from Gemini response
+            content = result['candidates'][0]['content']['parts'][0]['text']
+
+            # With responseMimeType set, Gemini's output IS the JSON directly -
+            # no need to regex-extract it from surrounding text.
+            try:
+                hooks_data = json.loads(content)
                 return hooks_data['hooks']
-            print(f"Raw response: {content}")
-            raise ValueError("Could not parse JSON from Gemini response")
-            
-    except Exception as e:
-        print(f"Error calling Gemini API: {e}")
-        raise
+            except json.JSONDecodeError:
+                # Fallback: try to extract a {...} block in case there's any wrapping text
+                import re
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    hooks_data = json.loads(json_match.group())
+                    return hooks_data['hooks']
+                print(f"Raw response: {content}")
+                raise ValueError("Could not parse JSON from Gemini response")
+
+        except urllib.error.HTTPError as e:
+            # 429 = rate limit (quota-based, wait longer)
+            # 503 = server overloaded (transient, shorter backoff)
+            if e.code in (429, 503) and attempt < max_retries - 1:
+                wait = 15 * (attempt + 1) if e.code == 429 else 2 ** attempt
+                print(f"Gemini {e.code} error, retrying in {wait}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            print(f"Error calling Gemini API: {e}")
+            raise
+        except Exception as e:
+            print(f"Error calling Gemini API: {e}")
+            raise
+
+    raise RuntimeError("Exhausted all retries calling Gemini API")
 
 
 def main():
     print("Loading competitor themes...")
     themes = load_themes()
-    
+
     print(f"Top themes: {[t['theme'] for t in themes['top_themes'][:3]]}")
-    
+
     hooks = generate_hooks(themes)
-    
+
     # Save hooks
     output = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "themes_analyzed": [t['theme'] for t in themes['top_themes']],
         "hooks": hooks
     }
-    
+
     hooks_path = os.path.join(OUTPUT_DIR, "hook_writer_output.json")
     with open(hooks_path, "w", encoding='utf-8') as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
     print(f"[OK] Saved hooks -> {hooks_path}\n")
-    
+
     # Print for review
     print("--- 5 CONTENT HOOKS (As Faria) ---\n")
     for i, hook in enumerate(hooks, 1):
