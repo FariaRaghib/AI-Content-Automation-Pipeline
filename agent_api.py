@@ -49,7 +49,7 @@ AGENTS = {
     "fetch_comments": "instagram_comments_fetcher.py",
     "auto_reply": "instagram_auto_reply.py",
     "telegram": "telegram_bot_fixed.py",
-    "blog_reply": "blog_reply_drafts.py"
+    "blog_reply": "blog_reply_drafts.py",
 }
 
 
